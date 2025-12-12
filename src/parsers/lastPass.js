@@ -75,9 +75,13 @@ const toCustomFields = (extraText, usedNotes = new Set()) => {
   return extraText
     .split(/\r?\n/)
     .map((line) => line.trim())
-    .filter(
-      (line) => line && !line.startsWith('NoteType:') && !usedNotes.has(line)
-    )
+    .filter((line) => {
+      const [fieldName, fieldValue] = line.split(':')
+
+      const lineValue = fieldValue ? fieldValue.trim() : fieldName.trim()
+
+      return line && !line.startsWith('NoteType:') && !usedNotes.has(lineValue)
+    })
     .map((note) => {
       let formatted = note
       if (/^(Phone|Fax|Evening Phone):/.test(note)) {
@@ -172,6 +176,34 @@ export const parseLastPassCsv = (text) => {
           region: getField(extra, 'State'),
           country: getField(extra, 'Country'),
           note,
+          customFields: toCustomFields(extra, usedNotes)
+        }
+      })
+    } else if (/NoteType:Wi-Fi Password/i.test(extra)) {
+      const title = getField(extra, 'SSID')
+      const password = getField(extra, 'Password')
+      const note = getField(extra, 'Notes')
+
+      if (title) {
+        usedNotes.add(title)
+      }
+
+      if (password) {
+        usedNotes.add(password)
+      }
+
+      if (note) {
+        usedNotes.add(note)
+      }
+
+      result.push({
+        type: 'wifiPassword',
+        folder,
+        isFavorite,
+        data: {
+          title: getField(extra, 'SSID'),
+          password: getField(extra, 'Password'),
+          note: getField(extra, 'Notes'),
           customFields: toCustomFields(extra, usedNotes)
         }
       })
