@@ -170,7 +170,7 @@ export const parseProtonPassCsv = (csvText) => {
           ...data,
           ...getIdentityDataFromContent({
             content: identityData,
-            metadata: { note }
+            metadata: { note: identityData.note }
           })
         }
         break
