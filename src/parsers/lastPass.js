@@ -1,6 +1,11 @@
 import { addHttps } from '../utils/addHttps'
 import { getRowsFromCsv } from '../utils/getRowsFromCsv'
 
+const NOTE_TYPE_CREDIT_CARD = /NoteType:Credit Card/i
+const NOTE_TYPE_ADDRESS_OR_IDENTITY = /NoteType:Address|NoteType:Identity/i
+const NOTE_TYPE_WIFI_PASSWORD = /NoteType:Wi-Fi Password/i
+const PHONE_FIELD_REGEX = /^(Phone|Fax|Evening Phone):/
+
 /**
  * @param {string[]} row
  * @param {string} name
@@ -74,21 +79,22 @@ const toCustomFields = (extraText, usedNotes = new Set()) => {
   if (!extraText?.trim()) return []
   return extraText
     .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => {
-      const [fieldName, fieldValue] = line.split(':')
+    .map((rawLine) => {
+      const line = rawLine.trim()
+      if (!line || line.startsWith('NoteType:')) return null
 
-      const lineValue = fieldValue ? fieldValue.trim() : fieldName.trim()
+      const colonIndex = line.indexOf(':')
+      const value = colonIndex !== -1 ? line.slice(colonIndex + 1).trim() : line
 
-      return line && !line.startsWith('NoteType:') && !usedNotes.has(lineValue)
+      return usedNotes.has(value) ? null : line
     })
+    .filter(Boolean)
     .map((note) => {
       let formatted = note
-      if (/^(Phone|Fax|Evening Phone):/.test(note)) {
+      if (PHONE_FIELD_REGEX.test(note)) {
         const [label, value] = note.split(/:(.+)/)
         formatted = `${label}:${normalizePhone(value)}`
       }
-      usedNotes.add(note)
       return { type: 'note', note: formatted }
     })
 }
@@ -124,7 +130,7 @@ export const parseLastPassCsv = (text) => {
 
     const websites = toWebsites(url)
 
-    if (/NoteType:Credit Card/i.test(extra)) {
+    if (NOTE_TYPE_CREDIT_CARD.test(extra)) {
       const note = getField(extra, 'Notes')
       if (note) usedNotes.add(note)
       result.push({
@@ -142,7 +148,7 @@ export const parseLastPassCsv = (text) => {
           customFields: toCustomFields(extra, usedNotes)
         }
       })
-    } else if (/NoteType:Address|NoteType:Identity/i.test(extra)) {
+    } else if (NOTE_TYPE_ADDRESS_OR_IDENTITY.test(extra)) {
       const note = getField(extra, 'Notes')
       if (note) {
         usedNotes.add(note)
@@ -179,21 +185,15 @@ export const parseLastPassCsv = (text) => {
           customFields: toCustomFields(extra, usedNotes)
         }
       })
-    } else if (/NoteType:Wi-Fi Password/i.test(extra)) {
+    } else if (NOTE_TYPE_WIFI_PASSWORD.test(extra)) {
       const title = getField(extra, 'SSID')
-      const password = getField(extra, 'Password')
+      const wifiPassword = getField(extra, 'Password')
       const note = getField(extra, 'Notes')
 
-      if (title) {
-        usedNotes.add(title)
-      }
-
-      if (password) {
-        usedNotes.add(password)
-      }
-
-      if (note) {
-        usedNotes.add(note)
+      for (const value of [title, wifiPassword, note]) {
+        if (value) {
+          usedNotes.add(value)
+        }
       }
 
       result.push({
@@ -201,9 +201,9 @@ export const parseLastPassCsv = (text) => {
         folder,
         isFavorite,
         data: {
-          title: getField(extra, 'SSID'),
-          password: getField(extra, 'Password'),
-          note: getField(extra, 'Notes'),
+          title,
+          password: wifiPassword,
+          note,
           customFields: toCustomFields(extra, usedNotes)
         }
       })
