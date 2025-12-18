@@ -53,12 +53,27 @@ export const parseBitwardenJson = (json) => {
   )
 
   return (json.items || []).map((item) => {
-    const { type, name, notes, favorite, folderId, login, card, identity } =
-      item
+    const {
+      type,
+      name,
+      notes,
+      favorite,
+      folderId,
+      fields,
+      login,
+      card,
+      identity,
+      sshKey
+    } = item
 
     const folder = folders[folderId] || null
     let entryType = 'custom'
     let data = {}
+
+    const customFields = (fields || []).map((field) => ({
+      type: 'note',
+      note: `${field.name}: ${field.value}`
+    }))
 
     switch (type) {
       case 1:
@@ -69,7 +84,12 @@ export const parseBitwardenJson = (json) => {
           password: login?.password || '',
           note: notes || '',
           websites: (login?.uris || []).map((u) => addHttps(u.uri)),
-          customFields: []
+          customFields: [
+            ...customFields,
+            ...(login?.totp
+              ? [{ type: 'note', note: `TOTP: ${login.totp}` }]
+              : [])
+          ]
         }
         break
 
@@ -78,7 +98,7 @@ export const parseBitwardenJson = (json) => {
         data = {
           title: name,
           note: notes || '',
-          customFields: []
+          customFields
         }
         break
 
@@ -87,14 +107,14 @@ export const parseBitwardenJson = (json) => {
         data = {
           title: name,
           name: card?.cardholderName || '',
-          number: card?.number || '',
+          number: (card?.number || '').replace(/\s/g, ''),
           expireDate: card
-            ? `${card.expMonth || ''}/${card.expYear || ''}`
+            ? `${card.expMonth || '__'} ${(card.expYear || '__').slice(-2)}`
             : '',
           securityCode: card?.code || '',
           pinCode: '',
           note: notes || '',
-          customFields: []
+          customFields
         }
         break
 
@@ -114,9 +134,30 @@ export const parseBitwardenJson = (json) => {
           country: identity?.country || '',
           passportNumber: identity?.passportNumber || '',
           drivingLicenseNumber: identity?.licenseNumber || '',
-          idCardNumber: identity?.ssn || '',
           note: notes || '',
-          customFields: []
+          customFields: [
+            ...customFields,
+            ...(identity?.ssn
+              ? [{ type: 'note', note: `SSN: ${identity.ssn}` }]
+              : [])
+          ]
+        }
+        break
+
+      case 5:
+        entryType = 'custom'
+        data = {
+          title: name,
+          customFields: [
+            { type: 'note', note: notes },
+            ...customFields,
+            ...(sshKey
+              ? Object.entries(sshKey).map(([key, value]) => ({
+                  type: 'note',
+                  note: `${key}: ${value}`
+                }))
+              : [])
+          ]
         }
         break
 
@@ -124,7 +165,7 @@ export const parseBitwardenJson = (json) => {
         entryType = 'custom'
         data = {
           title: name,
-          customFields: []
+          customFields
         }
     }
     return {
@@ -152,7 +193,16 @@ export const parseBitwardenCSV = (csvText) => {
       headers.map((key, i) => [key, row[i]?.trim() ?? ''])
     )
 
-    const { folder, favorite, type, name, notes } = item
+    const { folder, favorite, type, name, notes, login_totp, fields } = item
+
+    const customFields = fields
+      ? fields
+          .split(/\r?\n/)
+          .map((line) => line.trim())
+          .filter(Boolean)
+          .map((line) => ({ type: 'note', note: line }))
+      : []
+
     let entryType = 'custom'
     let data = {}
 
@@ -169,7 +219,12 @@ export const parseBitwardenCSV = (csvText) => {
             .map((uri) => uri.trim())
             .filter(Boolean)
             .map((website) => addHttps(website)),
-          customFields: []
+          customFields: [
+            ...customFields,
+            ...(login_totp
+              ? [{ type: 'note', note: `TOTP: ${login_totp}` }]
+              : [])
+          ]
         }
         break
 
@@ -178,7 +233,7 @@ export const parseBitwardenCSV = (csvText) => {
         data = {
           title: name,
           note: notes || '',
-          customFields: []
+          customFields
         }
         break
 
@@ -186,7 +241,7 @@ export const parseBitwardenCSV = (csvText) => {
         entryType = 'custom'
         data = {
           title: name,
-          customFields: []
+          customFields
         }
         break
     }
