@@ -28,6 +28,7 @@ export const parseNordPassCSV = (csvText) => {
       cardnumber,
       cvc,
       pin,
+      zipcode,
       expirydate,
       full_name,
       phone_number,
@@ -71,6 +72,15 @@ export const parseNordPassCSV = (csvText) => {
         }
       }
     } else if (type === 'credit_card') {
+      const customFields = parseCustomFields(custom_fields)
+
+      if (zipcode) {
+        customFields.push({
+          type: 'note',
+          note: `Zipcode: ${zipcode}`
+        })
+      }
+
       entry = {
         type: 'creditCard',
         ...base,
@@ -82,7 +92,7 @@ export const parseNordPassCSV = (csvText) => {
           securityCode: cvc || '',
           pinCode: pin || '',
           note: note || '',
-          customFields: parseCustomFields(custom_fields)
+          customFields
         }
       }
     } else if (type === 'note') {
@@ -139,7 +149,7 @@ const parseCustomFields = (customFields) => {
     const parsed = JSON.parse(customFields || '[]')
     return parsed.map(({ label, value }) => ({
       type: 'note',
-      note: `${label}:${value}`
+      note: `${label}: ${value}`
     }))
   } catch {
     return []

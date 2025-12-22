@@ -1,6 +1,11 @@
 import { addHttps } from '../utils/addHttps'
 import { getRowsFromCsv } from '../utils/getRowsFromCsv'
 
+const NOTE_TYPE_CREDIT_CARD = /NoteType:Credit Card/i
+const NOTE_TYPE_ADDRESS_OR_IDENTITY = /NoteType:Address|NoteType:Identity/i
+const NOTE_TYPE_WIFI_PASSWORD = /NoteType:Wi-Fi Password/i
+const PHONE_FIELD_REGEX = /^(Phone|Fax|Evening Phone):/
+
 /**
  * @param {string[]} row
  * @param {string} name
@@ -74,17 +79,24 @@ const toCustomFields = (extraText, usedNotes = new Set()) => {
   if (!extraText?.trim()) return []
   return extraText
     .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(
-      (line) => line && !line.startsWith('NoteType:') && !usedNotes.has(line)
-    )
+    .map((rawLine) => {
+      const line = rawLine.trim()
+      if (!line || line.startsWith('NoteType:')) return null
+
+      const colonIndex = line.indexOf(':')
+      const value = colonIndex !== -1 ? line.slice(colonIndex + 1).trim() : line
+
+      if (!value) return null
+
+      return usedNotes.has(value) ? null : line
+    })
+    .filter(Boolean)
     .map((note) => {
       let formatted = note
-      if (/^(Phone|Fax|Evening Phone):/.test(note)) {
+      if (PHONE_FIELD_REGEX.test(note)) {
         const [label, value] = note.split(/:(.+)/)
         formatted = `${label}:${normalizePhone(value)}`
       }
-      usedNotes.add(note)
       return { type: 'note', note: formatted }
     })
 }
@@ -120,28 +132,69 @@ export const parseLastPassCsv = (text) => {
 
     const websites = toWebsites(url)
 
-    if (/NoteType:Credit Card/i.test(extra)) {
+    if (NOTE_TYPE_CREDIT_CARD.test(extra)) {
       const note = getField(extra, 'Notes')
-      if (note) usedNotes.add(note)
+      const name = getField(extra, 'Name on Card')
+      const number = getField(extra, 'Number')
+      const expireDate = getField(extra, 'Expiration Date')
+      const securityCode = getField(extra, 'Security Code')
+
+      for (const value of [name, number, expireDate, securityCode, note]) {
+        if (value) {
+          usedNotes.add(value)
+        }
+      }
+
       result.push({
         type: 'creditCard',
         folder,
         isFavorite,
         data: {
           title: name || '',
-          name: getField(extra, 'Name on Card'),
-          number: getField(extra, 'Number'),
-          expireDate: normalizeExpiry(getField(extra, 'Expiration Date')),
-          securityCode: getField(extra, 'Security Code'),
+          name,
+          number,
+          expireDate: normalizeExpiry(expireDate),
+          securityCode,
           pinCode: '',
           note,
           customFields: toCustomFields(extra, usedNotes)
         }
       })
-    } else if (/NoteType:Address|NoteType:Identity/i.test(extra)) {
+    } else if (NOTE_TYPE_ADDRESS_OR_IDENTITY.test(extra)) {
       const note = getField(extra, 'Notes')
-      if (note) {
-        usedNotes.add(note)
+      const firstName = getField(extra, 'First Name')
+      const middleName = getField(extra, 'Middle Name')
+      const lastName = getField(extra, 'Last Name')
+      const username = getField(extra, 'Username')
+      const email = getField(extra, 'Email Address')
+      const phoneNumber = getField(extra, 'Mobile Phone')
+      const address1 = getField(extra, 'Address 1')
+      const address2 = getField(extra, 'Address 2')
+      const address3 = getField(extra, 'Address 3')
+      const zip = getField(extra, 'Zip / Postal Code')
+      const city = getField(extra, 'City / Town')
+      const region = getField(extra, 'State')
+      const country = getField(extra, 'Country')
+
+      for (const value of [
+        firstName,
+        middleName,
+        lastName,
+        username,
+        email,
+        phoneNumber,
+        address1,
+        address2,
+        address3,
+        zip,
+        city,
+        region,
+        country,
+        note
+      ]) {
+        if (value) {
+          usedNotes.add(value)
+        }
       }
 
       result.push({
@@ -150,27 +203,37 @@ export const parseLastPassCsv = (text) => {
         isFavorite,
         data: {
           title: name || '',
-          fullName: [
-            getField(extra, 'First Name'),
-            getField(extra, 'Middle Name'),
-            getField(extra, 'Last Name')
-          ]
-            .filter(Boolean)
-            .join(' '),
-          username: getField(extra, 'Username'),
-          email: getField(extra, 'Email Address'),
-          phoneNumber: normalizePhone(getField(extra, 'Mobile Phone')),
-          address: [
-            getField(extra, 'Address 1'),
-            getField(extra, 'Address 2'),
-            getField(extra, 'Address 3')
-          ]
-            .filter(Boolean)
-            .join(', '),
-          zip: getField(extra, 'Zip / Postal Code'),
-          city: getField(extra, 'City / Town'),
-          region: getField(extra, 'State'),
-          country: getField(extra, 'Country'),
+          fullName: [firstName, middleName, lastName].filter(Boolean).join(' '),
+          username,
+          email,
+          phoneNumber: normalizePhone(phoneNumber),
+          address: [address1, address2, address3].filter(Boolean).join(', '),
+          zip,
+          city,
+          region,
+          country,
+          note,
+          customFields: toCustomFields(extra, usedNotes)
+        }
+      })
+    } else if (NOTE_TYPE_WIFI_PASSWORD.test(extra)) {
+      const title = getField(extra, 'SSID')
+      const wifiPassword = getField(extra, 'Password')
+      const note = getField(extra, 'Notes')
+
+      for (const value of [title, wifiPassword, note]) {
+        if (value) {
+          usedNotes.add(value)
+        }
+      }
+
+      result.push({
+        type: 'wifiPassword',
+        folder,
+        isFavorite,
+        data: {
+          title,
+          password: wifiPassword,
           note,
           customFields: toCustomFields(extra, usedNotes)
         }

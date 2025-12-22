@@ -47,17 +47,19 @@ const getIdentityDataFromContent = ({ content = {}, metadata = {} }) => ({
   fullName: content.fullName || '',
   email: content.email || '',
   phoneNumber: content.phoneNumber || '',
-  address: content.streetAddress || '' + ' ' + content.floor || '',
+  address: (content.streetAddress || '' + ' ' + content.floor || '').trim(),
   zip: content.zipOrPostalCode || '',
   city: content.city || '',
   region: content.stateOrProvince || '',
   country: content.countryOrRegion || '',
   passportFullName:
-    (content.firstName || '') +
+    (
+      (content.firstName || '') +
       ' ' +
       (content.middleName || '') +
       ' ' +
-      (content.lastName || '') ||
+      (content.lastName || '')
+    ).trim() ||
     content.fullName ||
     '',
   passportNumber: content.passportNumber || '',
@@ -170,7 +172,7 @@ export const parseProtonPassCsv = (csvText) => {
           ...data,
           ...getIdentityDataFromContent({
             content: identityData,
-            metadata: { note }
+            metadata: { note: identityData.note }
           })
         }
         break
