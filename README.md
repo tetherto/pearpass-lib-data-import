@@ -8,6 +8,7 @@ This library provides functions to parse exported data from the following passwo
 
 *   1Password
 *   Bitwarden
+*   KeePassXC
 *   LastPass
 *   NordPass
 *   PearPass
