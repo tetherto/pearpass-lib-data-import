@@ -109,7 +109,7 @@ export const parseBitwardenJson = (json) => {
           name: card?.cardholderName || '',
           number: (card?.number || '').replace(/\s/g, ''),
           expireDate: card
-            ? `${card.expMonth || '__'} ${(card.expYear || '__').slice(-2)}`
+            ? `${card.expMonth ? String(card.expMonth).padStart(2, '0') : '__'} ${(card.expYear || '__').slice(-2)}`
             : '',
           securityCode: card?.code || '',
           pinCode: '',
@@ -136,10 +136,16 @@ export const parseBitwardenJson = (json) => {
           drivingLicenseNumber: identity?.licenseNumber || '',
           note: notes || '',
           customFields: [
-            ...customFields,
+            ...(identity?.title
+              ? [{ type: 'note', note: `Title: ${identity.title}` }]
+              : []),
+            ...(identity?.username
+              ? [{ type: 'note', note: `Username: ${identity.username}` }]
+              : []),
             ...(identity?.ssn
               ? [{ type: 'note', note: `SSN: ${identity.ssn}` }]
-              : [])
+              : []),
+            ...customFields
           ]
         }
         break

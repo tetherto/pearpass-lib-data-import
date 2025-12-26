@@ -33,6 +33,30 @@ const getCustomFieldsFromContent = (content) => [
           note: 'Job Title: ' + content.jobTitle
         }
       ]
+    : []),
+  ...(content.socialSecurityNumber
+    ? [
+        {
+          type: 'note',
+          note: 'Social Security Number: ' + content.socialSecurityNumber
+        }
+      ]
+    : []),
+  ...(content.county
+    ? [
+        {
+          type: 'note',
+          note: 'County: ' + content.county
+        }
+      ]
+    : []),
+  ...(content.secondPhoneNumber
+    ? [
+        {
+          type: 'note',
+          note: 'Second Phone Number: ' + content.secondPhoneNumber
+        }
+      ]
     : [])
 ]
 
@@ -52,24 +76,15 @@ const getIdentityDataFromContent = ({ content = {}, metadata = {} }) => ({
   city: content.city || '',
   region: content.stateOrProvince || '',
   country: content.countryOrRegion || '',
-  passportFullName:
-    (
-      (content.firstName || '') +
-      ' ' +
-      (content.middleName || '') +
-      ' ' +
-      (content.lastName || '')
-    ).trim() ||
-    content.fullName ||
-    '',
+  passportFullName: '',
   passportNumber: content.passportNumber || '',
-  passportIssuingCountry: content.county || content.countryOrRegion || '',
+  passportIssuingCountry: '',
   passportDob: content.birthdate || '',
   passportGender: content.gender || '',
-  idCardNumber: content.socialSecurityNumber || '',
-  idCardIssuingCountry: content.county || content.countryOrRegion || '',
+  idCardNumber: '',
+  idCardIssuingCountry: '',
   drivingLicenseNumber: content.licenseNumber || '',
-  drivingLicenseIssuingCountry: content.county || content.countryOrRegion || '',
+  drivingLicenseIssuingCountry: '',
   note: metadata.note || '',
   customFields: getCustomFieldsFromContent(content)
 })
