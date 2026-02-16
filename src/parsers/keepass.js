@@ -1,10 +1,9 @@
 import { argon2id, argon2d } from 'hash-wasm'
-import * as kdbxweb from 'kdbxweb'
+import kdbxweb from 'kdbxweb'
 
 import { addHttps } from '../utils/addHttps'
 import { getRowsFromCsv } from '../utils/getRowsFromCsv'
 
-// Wire Argon2 into kdbxweb for KDBX4 support
 kdbxweb.CryptoEngine.setArgon2Impl(
   (password, salt, memory, iterations, length, parallelism, type) => {
     const hashFn = type === kdbxweb.Consts.KdfId.Argon2id ? argon2id : argon2d
@@ -36,7 +35,8 @@ const TOTP_FIELDS = new Set([
 ])
 
 /**
- * @param {string} value
+ * Extracts text from a KDBX field value, handling ProtectedValue instances.
+ * @param {string | kdbxweb.ProtectedValue} value
  * @returns {string}
  */
 const getFieldText = (value) => {
@@ -46,9 +46,9 @@ const getFieldText = (value) => {
 }
 
 /**
- * Recursively walks KDBX groups and extracts entries
- * @param {object} group
- * @param {string} parentPath
+ * Recursively walks a KDBX group tree and extracts entries.
+ * @param {object} group - A kdbxweb group object.
+ * @param {string} parentPath - Accumulated folder path from parent groups.
  * @returns {Array<object>}
  */
 const walkGroup = (group, parentPath = '') => {
@@ -103,83 +103,44 @@ const walkGroup = (group, parentPath = '') => {
 }
 
 /**
- * @param {ArrayBuffer} arrayBuffer
- * @param {string} password
+ * Parses a KDBX (KeePass 2.x) encrypted database file.
+ * @param {ArrayBuffer} arrayBuffer - Raw KDBX file contents.
+ * @param {string} password - Master password for decryption.
  * @returns {Promise<Array<object>>}
  */
 export const parseKeePassKdbx = async (arrayBuffer, password) => {
+  let db
   try {
     const credentials = new kdbxweb.Credentials(
       kdbxweb.ProtectedValue.fromString(password)
     )
-    const db = await kdbxweb.Kdbx.load(
+    db = await kdbxweb.Kdbx.load(
       new Uint8Array(arrayBuffer).buffer,
       credentials
     )
-
-    const results = []
-    const rootGroup = db.groups[0]
-    if (!rootGroup) return results
-
-    // Walk from root, but don't use root group name as folder prefix
-    for (const entry of rootGroup.entries || []) {
-      const fields = entry.fields || new Map()
-
-      const title = getFieldText(fields.get('Title'))
-      const username = getFieldText(fields.get('UserName'))
-      const password = getFieldText(fields.get('Password'))
-      const url = getFieldText(fields.get('URL'))
-      const notes = getFieldText(fields.get('Notes'))
-
-      const customFields = []
-      for (const [key, value] of fields) {
-        if (STANDARD_FIELDS.has(key)) continue
-        const text = getFieldText(value)
-        if (!text) continue
-        if (TOTP_FIELDS.has(key)) {
-          customFields.push({ type: 'note', note: `TOTP: ${text}` })
-        } else {
-          customFields.push({ type: 'note', note: `${key}: ${text}` })
-        }
-      }
-
-      results.push({
-        type: 'login',
-        folder: null,
-        isFavorite: false,
-        data: {
-          title,
-          username,
-          password,
-          note: notes,
-          websites: url ? [addHttps(url)] : [],
-          customFields
-        }
-      })
-    }
-
-    for (const subGroup of rootGroup.groups || []) {
-      results.push(...walkGroup(subGroup, ''))
-    }
-
-    return results
   } catch (error) {
     if (
       error?.code === kdbxweb.Consts.ErrorCodes.InvalidKey ||
+      error?.message?.includes('InvalidKey') ||
       error?.message?.includes('Invalid key') ||
       error?.message?.includes('invalid key') ||
       error?.code === 'InvalidKey'
     ) {
       throw new Error('Incorrect password')
     }
-    throw new Error('Unsupported or corrupted file')
+    throw new Error(`Failed to open database: ${error.message || error}`)
   }
+
+  const rootGroup = db.groups[0]
+  if (!rootGroup) return []
+
+  return walkGroup(rootGroup, '')
 }
 
 /**
- * Parses KeePass 1.x CSV format
+ * Parses KeePass 1.x CSV export format.
  * Columns: "Account","Login Name","Password","Web Site","Comments"
- * @param {string[][]} headerRow
+ * @param {string[]} headerRow
  * @param {string[][]} dataRows
  * @returns {Array<object>}
  */
@@ -207,9 +168,9 @@ const parseKeePass1xCsv = (headerRow, dataRows) => {
 }
 
 /**
- * Parses KeePassXC CSV format
+ * Parses KeePassXC CSV export format.
  * Columns: "Group","Title","Username","Password","URL","Notes","TOTP",...
- * @param {string[][]} headerRow
+ * @param {string[]} headerRow
  * @param {string[][]} dataRows
  * @returns {Array<object>}
  */
@@ -243,8 +204,8 @@ const parseKeePassXCCsv = (headerRow, dataRows) => {
 }
 
 /**
- * Auto-detects KeePass vs KeePassXC CSV format from header row and parses
- * @param {string} text
+ * Parses a KeePass/KeePassXC CSV export, auto-detecting the format from headers.
+ * @param {string} text - Raw CSV file contents.
  * @returns {Array<object>}
  */
 export const parseKeePassCsv = (text) => {
@@ -269,14 +230,13 @@ export const parseKeePassCsv = (text) => {
     return parseKeePass1xCsv(headerRow, dataRows)
   }
 
-  // Fallback: try KeePassXC format (more columns = more likely to match something)
   return parseKeePassXCCsv(headerRow, dataRows)
 }
 
 /**
- * Recursively walks XML Group elements to extract entries with folder paths
+ * Recursively walks an XML Group element tree and extracts entries.
  * @param {Element} groupElement
- * @param {string} parentPath
+ * @param {string} parentPath - Accumulated folder path from parent groups.
  * @returns {Array<object>}
  */
 const walkXmlGroup = (groupElement, parentPath = '') => {
@@ -348,7 +308,8 @@ const walkXmlGroup = (groupElement, parentPath = '') => {
 }
 
 /**
- * @param {string} text
+ * Parses a KeePass/KeePassXC XML export.
+ * @param {string} text - Raw XML file contents.
  * @returns {Array<object>}
  */
 export const parseKeePassXml = (text) => {
@@ -368,73 +329,14 @@ export const parseKeePassXml = (text) => {
   const rootGroup = root.querySelector('Group')
   if (!rootGroup) return []
 
-  const results = []
-
-  // Process entries directly in root group (no folder prefix)
-  const rootEntries = Array.from(rootGroup.children).filter(
-    (child) => child.tagName === 'Entry'
-  )
-
-  for (const entry of rootEntries) {
-    const strings = Array.from(entry.children).filter(
-      (child) => child.tagName === 'String'
-    )
-
-    const fields = {}
-    for (const str of strings) {
-      const keyEl = Array.from(str.children).find((c) => c.tagName === 'Key')
-      const valueEl = Array.from(str.children).find(
-        (c) => c.tagName === 'Value'
-      )
-      if (keyEl) {
-        fields[keyEl.textContent] = valueEl?.textContent || ''
-      }
-    }
-
-    const url = fields.URL || ''
-    const customFields = []
-
-    for (const [key, value] of Object.entries(fields)) {
-      if (STANDARD_FIELDS.has(key)) continue
-      if (!value) continue
-      if (TOTP_FIELDS.has(key)) {
-        customFields.push({ type: 'note', note: `TOTP: ${value}` })
-      } else {
-        customFields.push({ type: 'note', note: `${key}: ${value}` })
-      }
-    }
-
-    results.push({
-      type: 'login',
-      folder: null,
-      isFavorite: false,
-      data: {
-        title: fields.Title || '',
-        username: fields.UserName || '',
-        password: fields.Password || '',
-        note: fields.Notes || '',
-        websites: url ? [addHttps(url)] : [],
-        customFields
-      }
-    })
-  }
-
-  // Process sub-groups
-  const subGroups = Array.from(rootGroup.children).filter(
-    (child) => child.tagName === 'Group'
-  )
-
-  for (const subGroup of subGroups) {
-    results.push(...walkXmlGroup(subGroup, ''))
-  }
-
-  return results
+  return walkXmlGroup(rootGroup, '')
 }
 
 /**
- * @param {string|ArrayBuffer} data
- * @param {string} fileType
- * @param {string} [password]
+ * Routes to the appropriate parser based on file type.
+ * @param {string | ArrayBuffer} data - File contents (text for CSV/XML, ArrayBuffer for KDBX).
+ * @param {string} fileType - One of 'kdbx', 'csv', or 'xml'.
+ * @param {string} [password] - Master password (required for KDBX).
  * @returns {Promise<Array<object>>}
  */
 export const parseKeePassData = async (data, fileType, password) => {

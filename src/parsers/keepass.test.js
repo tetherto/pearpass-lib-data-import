@@ -185,6 +185,13 @@ describe('parseKeePassCsv - KeePassXC format', () => {
     expect(result[0].folder).toBeNull()
   })
 
+  it('preserves "Root" group as folder', () => {
+    const csv = `"Group","Title","Username","Password","URL","Notes","TOTP"
+"Root","FB","user@gmail.com","pass123","","",""`
+    const result = parseKeePassCsv(csv)
+    expect(result[0].folder).toBe('Root')
+  })
+
   it('handles empty fields in KeePassXC format', () => {
     const csv = `"Group","Title","Username","Password","URL","Notes","TOTP"
 "","","","","","",""`
@@ -266,7 +273,7 @@ describe('parseKeePassXml', () => {
     expect(result).toEqual([
       {
         type: 'login',
-        folder: null,
+        folder: 'Root',
         isFavorite: false,
         data: {
           title: 'Test Entry',
@@ -303,7 +310,7 @@ describe('parseKeePassXml', () => {
   </Root>
 </KeePassFile>`
     const result = parseKeePassXml(xml)
-    expect(result[0].folder).toBe('Internet/Banking')
+    expect(result[0].folder).toBe('Root/Internet/Banking')
   })
 
   it('extracts custom fields', () => {
@@ -431,11 +438,11 @@ describe('parseKeePassXml', () => {
 </KeePassFile>`
     const result = parseKeePassXml(xml)
     expect(result.length).toBe(3)
-    expect(result[0].folder).toBeNull()
+    expect(result[0].folder).toBe('Root')
     expect(result[0].data.title).toBe('Root Entry')
-    expect(result[1].folder).toBe('Email')
+    expect(result[1].folder).toBe('Root/Email')
     expect(result[1].data.title).toBe('Gmail')
-    expect(result[2].folder).toBe('Social')
+    expect(result[2].folder).toBe('Root/Social')
     expect(result[2].data.title).toBe('Twitter')
   })
 })
@@ -468,7 +475,7 @@ describe('parseKeePassKdbx', () => {
     expect(result).toEqual([
       {
         type: 'login',
-        folder: null,
+        folder: 'Root',
         isFavorite: false,
         data: {
           title: 'Test Login',
@@ -516,9 +523,9 @@ describe('parseKeePassKdbx', () => {
 
     const result = await parseKeePassKdbx(new ArrayBuffer(10), 'password')
     expect(result.length).toBe(2)
-    expect(result[0].folder).toBe('Internet')
+    expect(result[0].folder).toBe('Root/Internet')
     expect(result[0].data.title).toBe('Web Entry')
-    expect(result[1].folder).toBe('Internet/Banking')
+    expect(result[1].folder).toBe('Root/Internet/Banking')
     expect(result[1].data.title).toBe('Bank Entry')
   })
 
@@ -612,11 +619,11 @@ describe('parseKeePassKdbx', () => {
     ).rejects.toThrow('Incorrect password')
   })
 
-  it('throws "Unsupported or corrupted file" on other errors', async () => {
+  it('throws with original error message on other errors', async () => {
     kdbxweb.Kdbx.load.mockRejectedValue(new Error('Random error'))
 
     await expect(parseKeePassKdbx(new ArrayBuffer(10), 'pass')).rejects.toThrow(
-      'Unsupported or corrupted file'
+      'Failed to open database: Random error'
     )
   })
 })
