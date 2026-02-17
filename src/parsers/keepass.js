@@ -1,0 +1,359 @@
+import { argon2id, argon2d } from 'hash-wasm'
+import kdbxweb from 'kdbxweb'
+
+import { addHttps } from '../utils/addHttps'
+import { getRowsFromCsv } from '../utils/getRowsFromCsv'
+
+kdbxweb.CryptoEngine.setArgon2Impl(
+  (password, salt, memory, iterations, length, parallelism, type) => {
+    const hashFn = type === kdbxweb.Consts.KdfId.Argon2id ? argon2id : argon2d
+    return hashFn({
+      password,
+      salt,
+      memorySize: memory,
+      iterations,
+      hashLength: length,
+      parallelism,
+      outputType: 'binary'
+    })
+  }
+)
+
+const STANDARD_FIELDS = new Set([
+  'Title',
+  'UserName',
+  'Password',
+  'URL',
+  'Notes'
+])
+
+const TOTP_FIELDS = new Set([
+  'otp',
+  'TOTP Settings',
+  'TOTP Seed',
+  'TimeOtp-Secret-Base32'
+])
+
+/**
+ * Extracts text from a KDBX field value, handling ProtectedValue instances.
+ * @param {string | kdbxweb.ProtectedValue} value
+ * @returns {string}
+ */
+const getFieldText = (value) => {
+  if (!value) return ''
+  if (value instanceof kdbxweb.ProtectedValue) return value.getText()
+  return String(value)
+}
+
+/**
+ * Recursively walks a KDBX group tree and extracts entries.
+ * @param {object} group - A kdbxweb group object.
+ * @param {string} parentPath - Accumulated folder path from parent groups.
+ * @returns {Array<object>}
+ */
+const walkGroup = (group, parentPath = '') => {
+  const results = []
+  const groupName = group.name || ''
+  const currentPath = parentPath ? `${parentPath}/${groupName}` : groupName
+
+  for (const entry of group.entries || []) {
+    const fields = entry.fields || new Map()
+
+    const title = getFieldText(fields.get('Title'))
+    const username = getFieldText(fields.get('UserName'))
+    const password = getFieldText(fields.get('Password'))
+    const url = getFieldText(fields.get('URL'))
+    const notes = getFieldText(fields.get('Notes'))
+
+    const customFields = []
+
+    for (const [key, value] of fields) {
+      if (STANDARD_FIELDS.has(key)) continue
+
+      const text = getFieldText(value)
+      if (!text) continue
+
+      if (TOTP_FIELDS.has(key)) {
+        customFields.push({ type: 'note', note: `TOTP: ${text}` })
+      } else {
+        customFields.push({ type: 'note', note: `${key}: ${text}` })
+      }
+    }
+
+    results.push({
+      type: 'login',
+      folder: currentPath || null,
+      isFavorite: false,
+      data: {
+        title,
+        username,
+        password,
+        note: notes,
+        websites: url ? [addHttps(url)] : [],
+        customFields
+      }
+    })
+  }
+
+  for (const subGroup of group.groups || []) {
+    results.push(...walkGroup(subGroup, currentPath))
+  }
+
+  return results
+}
+
+/**
+ * Parses a KDBX (KeePass 2.x) encrypted database file.
+ * @param {ArrayBuffer} arrayBuffer - Raw KDBX file contents.
+ * @param {string} password - Master password for decryption.
+ * @returns {Promise<Array<object>>}
+ */
+export const parseKeePassKdbx = async (arrayBuffer, password) => {
+  let db
+  try {
+    const credentials = new kdbxweb.Credentials(
+      kdbxweb.ProtectedValue.fromString(password)
+    )
+    db = await kdbxweb.Kdbx.load(
+      new Uint8Array(arrayBuffer).buffer,
+      credentials
+    )
+  } catch (error) {
+    if (
+      error?.code === kdbxweb.Consts.ErrorCodes.InvalidKey ||
+      error?.message?.includes('InvalidKey') ||
+      error?.message?.includes('Invalid key') ||
+      error?.message?.includes('invalid key') ||
+      error?.code === 'InvalidKey'
+    ) {
+      throw new Error('Incorrect password')
+    }
+    throw new Error(`Failed to open database: ${error.message || error}`)
+  }
+
+  const rootGroup = db.groups[0]
+  if (!rootGroup) return []
+
+  return walkGroup(rootGroup, '')
+}
+
+/**
+ * Parses KeePass 1.x CSV export format.
+ * Columns: "Account","Login Name","Password","Web Site","Comments"
+ * @param {string[]} headerRow
+ * @param {string[][]} dataRows
+ * @returns {Array<object>}
+ */
+const parseKeePass1xCsv = (headerRow, dataRows) => {
+  const get = (row, name) =>
+    row[headerRow.indexOf(name)]?.replace(/^"|"$/g, '').trim() || ''
+
+  return dataRows.map((row) => {
+    const url = get(row, 'Web Site')
+
+    return {
+      type: 'login',
+      folder: null,
+      isFavorite: false,
+      data: {
+        title: get(row, 'Account'),
+        username: get(row, 'Login Name'),
+        password: get(row, 'Password'),
+        note: get(row, 'Comments'),
+        websites: url ? [addHttps(url)] : [],
+        customFields: []
+      }
+    }
+  })
+}
+
+/**
+ * Parses KeePassXC CSV export format.
+ * Columns: "Group","Title","Username","Password","URL","Notes","TOTP",...
+ * @param {string[]} headerRow
+ * @param {string[][]} dataRows
+ * @returns {Array<object>}
+ */
+const parseKeePassXCCsv = (headerRow, dataRows) => {
+  const headers = headerRow.map((h) => h.trim().toLowerCase())
+
+  return dataRows.map((row) => {
+    const item = Object.fromEntries(
+      headers.map((key, i) => [key, row[i]?.trim() ?? ''])
+    )
+
+    const url = item.url || ''
+    const totp = item.totp || ''
+
+    const customFields = totp ? [{ type: 'note', note: `TOTP: ${totp}` }] : []
+
+    return {
+      type: 'login',
+      folder: item.group || null,
+      isFavorite: false,
+      data: {
+        title: item.title || '',
+        username: item.username || '',
+        password: item.password || '',
+        note: item.notes || '',
+        websites: url ? [addHttps(url)] : [],
+        customFields
+      }
+    }
+  })
+}
+
+/**
+ * Parses a KeePass/KeePassXC CSV export, auto-detecting the format from headers.
+ * @param {string} text - Raw CSV file contents.
+ * @returns {Array<object>}
+ */
+export const parseKeePassCsv = (text) => {
+  const rows = getRowsFromCsv(text)
+  const [headerRow, ...dataRows] = rows
+
+  if (!headerRow || dataRows.length === 0) return []
+
+  const normalizedHeaders = headerRow.map((h) => h.trim().toLowerCase())
+
+  if (
+    normalizedHeaders.includes('title') &&
+    normalizedHeaders.includes('username')
+  ) {
+    return parseKeePassXCCsv(headerRow, dataRows)
+  }
+
+  if (
+    normalizedHeaders.includes('account') &&
+    normalizedHeaders.includes('login name')
+  ) {
+    return parseKeePass1xCsv(headerRow, dataRows)
+  }
+
+  return parseKeePassXCCsv(headerRow, dataRows)
+}
+
+/**
+ * Recursively walks an XML Group element tree and extracts entries.
+ * @param {Element} groupElement
+ * @param {string} parentPath - Accumulated folder path from parent groups.
+ * @returns {Array<object>}
+ */
+const walkXmlGroup = (groupElement, parentPath = '') => {
+  const results = []
+
+  const nameEl = Array.from(groupElement.children).find(
+    (child) => child.tagName === 'Name'
+  )
+  const groupName = nameEl?.textContent || ''
+  const currentPath = parentPath ? `${parentPath}/${groupName}` : groupName
+
+  const entries = Array.from(groupElement.children).filter(
+    (child) => child.tagName === 'Entry'
+  )
+
+  for (const entry of entries) {
+    const strings = Array.from(entry.children).filter(
+      (child) => child.tagName === 'String'
+    )
+
+    const fields = {}
+    for (const str of strings) {
+      const keyEl = Array.from(str.children).find((c) => c.tagName === 'Key')
+      const valueEl = Array.from(str.children).find(
+        (c) => c.tagName === 'Value'
+      )
+      if (keyEl) {
+        fields[keyEl.textContent] = valueEl?.textContent || ''
+      }
+    }
+
+    const url = fields.URL || ''
+    const customFields = []
+
+    for (const [key, value] of Object.entries(fields)) {
+      if (STANDARD_FIELDS.has(key)) continue
+      if (!value) continue
+      if (TOTP_FIELDS.has(key)) {
+        customFields.push({ type: 'note', note: `TOTP: ${value}` })
+      } else {
+        customFields.push({ type: 'note', note: `${key}: ${value}` })
+      }
+    }
+
+    results.push({
+      type: 'login',
+      folder: currentPath || null,
+      isFavorite: false,
+      data: {
+        title: fields.Title || '',
+        username: fields.UserName || '',
+        password: fields.Password || '',
+        note: fields.Notes || '',
+        websites: url ? [addHttps(url)] : [],
+        customFields
+      }
+    })
+  }
+
+  const subGroups = Array.from(groupElement.children).filter(
+    (child) => child.tagName === 'Group'
+  )
+
+  for (const subGroup of subGroups) {
+    results.push(...walkXmlGroup(subGroup, currentPath))
+  }
+
+  return results
+}
+
+/**
+ * Parses a KeePass/KeePassXC XML export.
+ * @param {string} text - Raw XML file contents.
+ * @returns {Array<object>}
+ */
+export const parseKeePassXml = (text) => {
+  const parser = new DOMParser()
+  const doc = parser.parseFromString(text, 'text/xml')
+
+  const parserError = doc.querySelector('parsererror')
+  if (parserError) {
+    throw new Error('Invalid KeePass XML file')
+  }
+
+  const root = doc.querySelector('KeePassFile > Root')
+  if (!root) {
+    throw new Error('Invalid KeePass XML file')
+  }
+
+  const rootGroup = root.querySelector('Group')
+  if (!rootGroup) return []
+
+  return walkXmlGroup(rootGroup, '')
+}
+
+/**
+ * Routes to the appropriate parser based on file type.
+ * @param {string | ArrayBuffer} data - File contents (text for CSV/XML, ArrayBuffer for KDBX).
+ * @param {string} fileType - One of 'kdbx', 'csv', or 'xml'.
+ * @param {string} [password] - Master password (required for KDBX).
+ * @returns {Promise<Array<object>>}
+ */
+export const parseKeePassData = async (data, fileType, password) => {
+  if (fileType === 'kdbx') {
+    if (!password) {
+      throw new Error('Password is required for KDBX files')
+    }
+    return parseKeePassKdbx(data, password)
+  }
+
+  if (fileType === 'csv') {
+    return parseKeePassCsv(data)
+  }
+
+  if (fileType === 'xml') {
+    return parseKeePassXml(data)
+  }
+
+  throw new Error('Unsupported file type, please use KDBX, CSV, or XML')
+}
