@@ -1,15 +1,20 @@
+import '../utils/setupCrypto.js'
+import { DOMParser as XmlDomParser } from '@xmldom/xmldom'
 import { argon2id, argon2d } from 'hash-wasm'
-import kdbxweb from 'kdbxweb'
+import * as _kdbxweb from 'kdbxweb'
+
+const kdbxweb = _kdbxweb.default || _kdbxweb
 
 import { addHttps } from '../utils/addHttps'
 import { getRowsFromCsv } from '../utils/getRowsFromCsv'
 
 kdbxweb.CryptoEngine.setArgon2Impl(
   (password, salt, memory, iterations, length, parallelism, type) => {
-    const hashFn = type === kdbxweb.Consts.KdfId.Argon2id ? argon2id : argon2d
+    const hashFn =
+      type === kdbxweb.CryptoEngine.Argon2TypeArgon2id ? argon2id : argon2d
     return hashFn({
-      password,
-      salt,
+      password: new Uint8Array(password),
+      salt: new Uint8Array(salt),
       memorySize: memory,
       iterations,
       hashLength: length,
@@ -233,8 +238,49 @@ export const parseKeePassCsv = (text) => {
   return parseKeePassXCCsv(headerRow, dataRows)
 }
 
+/** Finds the first direct child element with the given tag name. */
+const findChild = (parent, tagName) => {
+  for (let i = 0; i < parent.childNodes.length; i++) {
+    const child = parent.childNodes[i]
+    if (child.nodeType === 1 && child.tagName === tagName) return child
+  }
+  return null
+}
+
+/** Finds all direct child elements with the given tag name. */
+const filterChildren = (parent, tagName) => {
+  const result = []
+  for (let i = 0; i < parent.childNodes.length; i++) {
+    const child = parent.childNodes[i]
+    if (child.nodeType === 1 && child.tagName === tagName) result.push(child)
+  }
+  return result
+}
+
+/**
+ * Creates a DOMParser, using native browser DOMParser if available,
+ * falling back to @xmldom/xmldom for React Native.
+ */
+const createXmlParser = () => {
+  if (typeof globalThis.DOMParser !== 'undefined') {
+    return new globalThis.DOMParser()
+  }
+  return new XmlDomParser({
+    errorHandler: {
+      warning: () => {},
+      error: (msg) => {
+        throw new Error(msg)
+      },
+      fatalError: (msg) => {
+        throw new Error(msg)
+      }
+    }
+  })
+}
+
 /**
  * Recursively walks an XML Group element tree and extracts entries.
+ * Uses DOM Level 2 methods (childNodes/tagName) for xmldom compatibility.
  * @param {Element} groupElement
  * @param {string} parentPath - Accumulated folder path from parent groups.
  * @returns {Array<object>}
@@ -242,27 +288,19 @@ export const parseKeePassCsv = (text) => {
 const walkXmlGroup = (groupElement, parentPath = '') => {
   const results = []
 
-  const nameEl = Array.from(groupElement.children).find(
-    (child) => child.tagName === 'Name'
-  )
+  const nameEl = findChild(groupElement, 'Name')
   const groupName = nameEl?.textContent || ''
   const currentPath = parentPath ? `${parentPath}/${groupName}` : groupName
 
-  const entries = Array.from(groupElement.children).filter(
-    (child) => child.tagName === 'Entry'
-  )
+  const entries = filterChildren(groupElement, 'Entry')
 
   for (const entry of entries) {
-    const strings = Array.from(entry.children).filter(
-      (child) => child.tagName === 'String'
-    )
+    const strings = filterChildren(entry, 'String')
 
     const fields = {}
     for (const str of strings) {
-      const keyEl = Array.from(str.children).find((c) => c.tagName === 'Key')
-      const valueEl = Array.from(str.children).find(
-        (c) => c.tagName === 'Value'
-      )
+      const keyEl = findChild(str, 'Key')
+      const valueEl = findChild(str, 'Value')
       if (keyEl) {
         fields[keyEl.textContent] = valueEl?.textContent || ''
       }
@@ -296,9 +334,7 @@ const walkXmlGroup = (groupElement, parentPath = '') => {
     })
   }
 
-  const subGroups = Array.from(groupElement.children).filter(
-    (child) => child.tagName === 'Group'
-  )
+  const subGroups = filterChildren(groupElement, 'Group')
 
   for (const subGroup of subGroups) {
     results.push(...walkXmlGroup(subGroup, currentPath))
@@ -313,20 +349,30 @@ const walkXmlGroup = (groupElement, parentPath = '') => {
  * @returns {Array<object>}
  */
 export const parseKeePassXml = (text) => {
-  const parser = new DOMParser()
-  const doc = parser.parseFromString(text, 'text/xml')
-
-  const parserError = doc.querySelector('parsererror')
-  if (parserError) {
+  let doc
+  try {
+    const parser = createXmlParser()
+    doc = parser.parseFromString(text, 'text/xml')
+  } catch {
     throw new Error('Invalid KeePass XML file')
   }
 
-  const root = doc.querySelector('KeePassFile > Root')
+  // Browser DOMParser wraps errors in <parsererror>
+  if (doc.getElementsByTagName('parsererror').length > 0) {
+    throw new Error('Invalid KeePass XML file')
+  }
+
+  const keepassFile = doc.getElementsByTagName('KeePassFile')[0]
+  if (!keepassFile) {
+    throw new Error('Invalid KeePass XML file')
+  }
+
+  const root = findChild(keepassFile, 'Root')
   if (!root) {
     throw new Error('Invalid KeePass XML file')
   }
 
-  const rootGroup = root.querySelector('Group')
+  const rootGroup = findChild(root, 'Group')
   if (!rootGroup) return []
 
   return walkXmlGroup(rootGroup, '')
