@@ -55,9 +55,11 @@ export function parseOtpUri(uri) {
     if (!issuer && prefix) issuer = prefix
   }
 
-  const algorithmRaw = url.searchParams.get('algorithm')
+  const algorithmRaw = url.searchParams.get('algorithm')?.toUpperCase()
   if (algorithmRaw && !VALID_ALGORITHMS.has(algorithmRaw)) {
-    throw new Error(`Invalid algorithm: "${algorithmRaw}". Must be SHA1, SHA256, or SHA512`)
+    throw new Error(
+      `Invalid algorithm: "${algorithmRaw}". Must be SHA1, SHA256, or SHA512`
+    )
   }
 
   const type = uriType === 'totp' ? OTP_TYPE.TOTP : OTP_TYPE.HOTP

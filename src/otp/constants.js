@@ -8,7 +8,6 @@ export const OTP_PROVIDERS = {
 export const STATUS = {
   complete: 'complete',
   incompleteBatch: 'incomplete-batch',
-  /** Internal batch-assembly state, not exposed to consumers */
   ready: 'ready'
 }
 

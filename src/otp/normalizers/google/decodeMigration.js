@@ -8,9 +8,13 @@ import { decodeMigrationPayload } from './protobuf.js'
  * @param {string} uri
  * @returns {{ otpParameters: Object[], version: number, batchSize: number, batchIndex: number, batchId: number }}
  */
+const BASE64_RE = /^[A-Za-z0-9+/]+=*$/
+
 export function decodeMigrationUri(uri) {
   if (typeof uri !== 'string' || !uri.startsWith('otpauth-migration://')) {
-    throw new Error('Invalid migration URI: must start with otpauth-migration://')
+    throw new Error(
+      'Invalid migration URI: must start with otpauth-migration://'
+    )
   }
 
   let url
@@ -25,15 +29,18 @@ export function decodeMigrationUri(uri) {
     throw new Error('Invalid migration URI: missing "data" query parameter')
   }
 
-  let buf
-  try {
-    buf = Buffer.from(data, 'base64')
-  } catch {
-    throw new Error('Invalid migration URI: "data" parameter is not valid base64')
+  if (!BASE64_RE.test(data)) {
+    throw new Error(
+      'Invalid migration URI: "data" parameter is not valid base64'
+    )
   }
 
+  const buf = Buffer.from(data, 'base64')
+
   if (buf.length === 0) {
-    throw new Error('Invalid migration URI: "data" parameter decoded to empty buffer')
+    throw new Error(
+      'Invalid migration URI: "data" parameter decoded to empty buffer'
+    )
   }
 
   return decodeMigrationPayload(buf)
