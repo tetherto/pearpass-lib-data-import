@@ -134,12 +134,18 @@ export const parseLastPassCsv = (text) => {
 
     if (NOTE_TYPE_CREDIT_CARD.test(extra)) {
       const note = getField(extra, 'Notes')
-      const name = getField(extra, 'Name on Card')
+      const nameOnCard = getField(extra, 'Name on Card')
       const number = getField(extra, 'Number')
       const expireDate = getField(extra, 'Expiration Date')
       const securityCode = getField(extra, 'Security Code')
 
-      for (const value of [name, number, expireDate, securityCode, note]) {
+      for (const value of [
+        nameOnCard,
+        number,
+        expireDate,
+        securityCode,
+        note
+      ]) {
         if (value) {
           usedNotes.add(value)
         }
@@ -150,8 +156,8 @@ export const parseLastPassCsv = (text) => {
         folder,
         isFavorite,
         data: {
-          title: name || '',
-          name,
+          title: name || nameOnCard || '',
+          name: nameOnCard,
           number,
           expireDate: normalizeExpiry(expireDate),
           securityCode,
