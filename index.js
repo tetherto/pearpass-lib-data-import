@@ -12,6 +12,13 @@ export { normalizeAegisDb } from './src/otp/normalizers/aegis/normalize'
 export { normalizeProtonAuthenticator } from './src/otp/normalizers/proton/normalize'
 export { parse1PasswordData } from './src/parsers/1password'
 export {
+  parseDashlaneCSV,
+  parseDashlaneData,
+  parseDashlaneExport
+} from './src/parsers/dashlane'
+export { decryptDashlaneExport } from './src/parsers/dashlaneCrypto'
+export { parseDashlaneXml } from './src/parsers/dashlaneXml'
+export {
   decryptBitwardenJson,
   parseBitwardenData
 } from './src/parsers/bitwarden'
