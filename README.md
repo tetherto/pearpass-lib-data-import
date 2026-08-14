@@ -1,3 +1,6 @@
+> [!WARNING]
+> 🍐 PearPass is currently paused from active development, so please use at your own caution until further notice.
+
 # pearpass-lib-data-import
 
 A utility for importing data from various password managers into a Pearpass vault.
