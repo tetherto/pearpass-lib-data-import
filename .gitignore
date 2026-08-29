@@ -1,1 +1,4 @@
 node_modules
+# Never commit real vault exports
+*.dash
+*.csv
